@@ -16,7 +16,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TORCH_HOME=/workspace/.cache/torch \
     TMPDIR=/workspace/tmp
 
-RUN apt-get update \
+RUN mkdir -p \
+      /workspace/tmp \
+      /workspace/.cache/huggingface \
+      /workspace/.cache/torch \
+      /opt/uv-cache \
+      /opt/pip-cache \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
@@ -37,13 +43,6 @@ RUN if ! python3 -m pip install --break-system-packages --no-cache-dir --upgrade
       && install -m 0755 /root/.local/bin/uv /usr/local/bin/uv; \
     fi
 
-RUN mkdir -p \
-      /workspace \
-      /workspace/tmp \
-      /workspace/.cache/huggingface \
-      /workspace/.cache/torch \
-      /opt/comfyui-runtime \
-      /opt/uv-cache \
-      /opt/pip-cache
+RUN mkdir -p /workspace /opt/comfyui-runtime
 
 WORKDIR /workspace
