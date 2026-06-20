@@ -29,6 +29,7 @@ RUN mkdir -p \
       git \
       jq \
       openssh-client \
+      openssh-server \
       python3 \
       python3-pip \
       python3-venv \
@@ -45,4 +46,17 @@ RUN if ! python3 -m pip install --break-system-packages --no-cache-dir --upgrade
 
 RUN mkdir -p /workspace /opt/comfyui-runtime
 
+# Entrypoint wrapper: stand up sshd (PUBLIC_KEY, host keys, TCP forwarding) and
+# then exec the base image's original launch (/start.sh) so ComfyUI + RunPod
+# init still run. SSH PLUS ComfyUI, not instead of it.
+COPY entrypoint.sh /opt/comfyui-runtime/entrypoint.sh
+RUN chmod +x /opt/comfyui-runtime/entrypoint.sh
+
 WORKDIR /workspace
+
+ENTRYPOINT ["/opt/comfyui-runtime/entrypoint.sh"]
+# Setting ENTRYPOINT resets any CMD inherited from the base image to null, so we
+# restate the RunPod convention CMD explicitly. It is passed to the entrypoint as
+# "$@" and exec'd after sshd starts. The entrypoint also auto-detects /start.sh,
+# so it still works if the real base launcher lives at a different path.
+CMD ["/start.sh"]
