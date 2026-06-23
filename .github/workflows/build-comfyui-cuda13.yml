@@ -61,8 +61,24 @@ jobs:
       # mirror pull below runs unauthenticated from the GitHub runner (off the
       # RunPod IPs that hit the limit). If the unauthenticated pull ever 429s, add
       # DOCKERHUB_USERNAME + DOCKERHUB_TOKEN repo secrets and this step engages.
+      # The `secrets` context is NOT allowed in step `if:` conditions, but it IS
+      # allowed in `env:`. Surface presence-of-creds as a plain env flag, then gate
+      # the login on that. No secret value is ever printed.
+      - name: Detect Docker Hub creds
+        id: dhcreds
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_USERNAME}" ] && [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to Docker Hub (optional, for base mirror)
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: steps.dhcreds.outputs.present == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
