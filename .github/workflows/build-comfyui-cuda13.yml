@@ -10,8 +10,8 @@ on:
       - "README.md"
   workflow_dispatch:
     inputs:
-      base_image:
-        description: "Parent image used by the Dockerfile"
+      upstream_base_image:
+        description: "Upstream (Docker Hub) base mirrored into GHCR"
         required: false
         default: "runpod/comfyui:cuda13.0"
 
@@ -21,7 +21,11 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}/comfyui-cuda13
-  DEFAULT_BASE_IMAGE: runpod/comfyui:cuda13.0
+  # Upstream base on Docker Hub — pulled ONCE here and mirrored to GHCR.
+  UPSTREAM_BASE_IMAGE: runpod/comfyui:cuda13.0
+  # GHCR mirror of the upstream base. The Dockerfile builds FROM this, so the
+  # image build pulls NOTHING from Docker Hub.
+  GHCR_BASE_IMAGE: ghcr.io/${{ github.repository }}/comfyui-base:cuda13.0
 
 jobs:
   build:
@@ -32,14 +36,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set base image
+      - name: Resolve upstream base image
         id: base
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.base_image }}" ]; then
-            echo "image=${{ inputs.base_image }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.upstream_base_image }}" ]; then
+            echo "upstream=${{ inputs.upstream_base_image }}" >> "$GITHUB_OUTPUT"
           else
-            echo "image=${DEFAULT_BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+            echo "upstream=${UPSTREAM_BASE_IMAGE}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Docker Buildx
@@ -51,6 +55,37 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Authenticate to Docker Hub ONLY if creds are provided as repo secrets.
+      # Authenticated pulls have a far higher rate limit; without creds the single
+      # mirror pull below runs unauthenticated from the GitHub runner (off the
+      # RunPod IPs that hit the limit). If the unauthenticated pull ever 429s, add
+      # DOCKERHUB_USERNAME + DOCKERHUB_TOKEN repo secrets and this step engages.
+      - name: Log in to Docker Hub (optional, for base mirror)
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Mirror the upstream base into GHCR if not already present, so the build
+      # below (and every future build) pulls the base from GHCR, never Docker Hub.
+      - name: Mirror base to GHCR
+        shell: bash
+        run: |
+          set -euo pipefail
+          UPSTREAM='${{ steps.base.outputs.upstream }}'
+          GHCR_BASE="${GHCR_BASE_IMAGE}"
+          echo "Checking whether ${GHCR_BASE} already exists in GHCR..."
+          if docker manifest inspect "${GHCR_BASE}" >/dev/null 2>&1; then
+            echo "GHCR base already present — skipping Docker Hub pull."
+          else
+            echo "GHCR base missing — pulling ${UPSTREAM} from Docker Hub (one-time mirror)."
+            docker pull "${UPSTREAM}"
+            docker tag "${UPSTREAM}" "${GHCR_BASE}"
+            docker push "${GHCR_BASE}"
+            echo "Mirrored ${UPSTREAM} -> ${GHCR_BASE}"
+          fi
 
       - name: Docker metadata
         id: meta
@@ -69,7 +104,7 @@ jobs:
           file: images/comfyui-cuda13/Dockerfile
           push: true
           build-args: |
-            BASE_IMAGE=${{ steps.base.outputs.image }}
+            BASE_IMAGE=${{ env.GHCR_BASE_IMAGE }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

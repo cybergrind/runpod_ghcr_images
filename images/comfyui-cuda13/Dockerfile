@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BASE_IMAGE=runpod/comfyui:cuda13.0
+# GHCR-ONLY base: the upstream `runpod/comfyui:cuda13.0` lives on Docker Hub,
+# whose UNAUTHENTICATED pull rate-limit (toomanyrequests) breaks pod/image starts.
+# CI mirrors that upstream base into GHCR as comfyui-base:cuda13.0 and builds FROM
+# the GHCR copy, so this build pulls NOTHING from Docker Hub. The mirror itself is
+# done once in the workflow (see build-comfyui-cuda13.yml: "Mirror base to GHCR").
+ARG BASE_IMAGE=ghcr.io/cybergrind/runpod_ghcr_images/comfyui-base:cuda13.0
 FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
