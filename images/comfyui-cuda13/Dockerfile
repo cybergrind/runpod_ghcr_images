@@ -46,9 +46,22 @@ RUN if ! python3 -m pip install --break-system-packages --no-cache-dir --upgrade
 
 RUN mkdir -p /workspace /opt/comfyui-runtime
 
-# Entrypoint wrapper: stand up sshd (PUBLIC_KEY, host keys, TCP forwarding) and
-# then exec the base image's original launch (/start.sh) so ComfyUI + RunPod
-# init still run. SSH PLUS ComfyUI, not instead of it.
+# Preserve the real sshd binary and replace /usr/sbin/sshd with a no-op shim.
+# The base image's /start.sh runs `/usr/sbin/sshd` inside its setup_ssh(); the
+# entrypoint launches /start.sh detached and is itself the authoritative sshd on
+# :22. Shadowing /usr/sbin/sshd with a no-op removes any port-22 race between the
+# detached base launch and our foreground sshd, deterministically. The entrypoint
+# execs the preserved binary at /usr/sbin/sshd.real in the foreground.
+RUN if [ -x /usr/sbin/sshd ] && [ ! -e /usr/sbin/sshd.real ]; then \
+      cp -a /usr/sbin/sshd /usr/sbin/sshd.real; \
+    fi \
+    && printf '#!/bin/sh\n# no-op: comfyui-cuda13 entrypoint owns the authoritative sshd on :22\nexit 0\n' > /usr/sbin/sshd \
+    && chmod 0755 /usr/sbin/sshd
+
+# Entrypoint wrapper: stand up the volume-independent sshd FIRST (PUBLIC_KEY,
+# host keys, TCP forwarding) as the resilient foreground PID 1, and launch the
+# base /start.sh detached/best-effort so an empty /workspace can never block the
+# container from becoming SSH-reachable. ComfyUI is started later by bin/run.py.
 COPY entrypoint.sh /opt/comfyui-runtime/entrypoint.sh
 RUN chmod +x /opt/comfyui-runtime/entrypoint.sh
 
